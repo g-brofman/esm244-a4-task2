@@ -1,0 +1,139 @@
+---
+title: "Assignment 4 Task 2: Parameter estimation"
+author: "Grace Brofman"
+date: "3/4/2021"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### **Introduction:**
+
+Data on global wild fish catch and aqucaulture production was compiled by the Earth Policy Institute (EPI) and U.N. Food and Agriculture Organization (FAO) from 1950-2010. Here, nonlinear least squares (NLS) is used to estimate parameters for global wild fish catch.
+
+Below: exploratory graphs of wild catch over time (both as-is (top) and log-transformed (bottom))
+```{r, message = FALSE, warning = FALSE}
+library(tidyverse)
+library(nlstools)
+library(janitor)
+library(lubridate)
+library(tsibble)
+
+fish_catch <- read_csv("fish_catch.csv") %>% 
+  janitor::row_to_names(2) %>% 
+  clean_names() %>% 
+  rename(wild_catch_mill_tons = wild_catch)
+
+fish_clean <- fish_catch[-c(1,2, 66, 67, 68, 69),] # removing rows 1 and 2 - need extra comma!
+
+index_vector <- c(0:62) # creating vector to add as column to data frame
+
+fish_clean$index_vector <- index_vector # adding vector as data frame
+
+# converting to numeric for graphing:
+fish_clean$wild_catch_mill_tons <- as.numeric(fish_clean$wild_catch_mill_tons)
+fish_clean$year <- as.Date(fish_clean$year, "%Y") # classifying as date (year)
+
+# explorator graph of wild fish catch over time
+# logistic growth
+exploratory_graph <- ggplot(data = fish_clean,
+       aes(x = year,
+           y = wild_catch_mill_tons)) +
+  geom_point() +
+  labs(x = "year", y = "wild catch (millions of tons")
+exploratory_graph
+
+# log transformed
+log_explore <- ggplot(data = fish_clean,
+       aes(x = year,
+           y = log(wild_catch_mill_tons))) +
+  geom_point() +
+  labs(x = "year", y = "ln(wild catch(millions of tons))")
+log_explore
+
+```
+```{r}
+# Exploratory graph appears somewhat logistic, Log-transformed data looks somewhat smoothed out. The later in time we get, the more of an upper limit fish catch appears to reach, indicating a carrying capacity. It looks similar to logistic growth, although the left "leg" of the graph does not appear to completely follow logistic growth.
+```
+
+Exploratory graphs suggest a logistic relationship.
+
+Logistic growth equation: 
+
+$P(t)=\frac{K}{1+Ae^{-kt}}$, where
+
+- $K$ is the carrying capacity
+- $A$ is $\frac{K-P_0}{P_0}$
+- $k$ is the growth rate constant
+
+Parameter estimates using nonlinear least squares (NLS):
+
+- $K$ ~ 94 million tons 
+- $A$ ~ 4.52
+- $k$ ~ 0.057 million tons/year
+
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+# First, estimate the growth constant during the exponential growth phase (*k*)
+
+# not removing observations here because growth appears to be exponential immediately
+df_exp <- fish_clean %>% 
+  filter(index_vector < 21) %>% 
+  mutate(ln_catch = log(wild_catch_mill_tons))
+
+# now model linear growth to get *k* estimate (aka slope of linear equation)
+lm_k <- lm(ln_catch ~ index_vector, data = df_exp)
+lm_k
+
+# coefficient (k) ~ 0.057
+
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+# Estimating parameters using non-linear least squares (NLS):
+df_nls <- nls(wild_catch_mill_tons ~ K/(1 + A*exp(-r*index_vector)),
+              data = fish_clean,
+              start = list(K = 94, A = 4.52, r = 0.057),
+              trace = TRUE)
+
+# see the model summary (null hypothesis: parameter value = 0)
+summary(df_nls)
+```
+```{r, message = FALSE, warning = FALSE}
+# use broom:: functions to get model outputs in tidier format:
+model_out <- broom::tidy(df_nls) # use View(model_out) to see the tidy model output
+View(model_out)
+
+
+```
+
+Our model with estimated parameters is:
+$$P(t) = \frac{100.3}{1+4.32e^{-0.07t}}$$
+
+```{r, message = FALSE, warning = FALSE}
+# make predictions for catch at all times in orginal df:
+catch_predict <- predict(df_nls)
+
+# bind predictions to original df:
+df_complete <- data.frame(fish_clean, catch_predict)
+
+# plot them together:
+ggplot(data = df_complete,
+       aes(x = year, y = wild_catch_mill_tons)) +
+  geom_point() +
+  geom_line(aes(x = year, y = catch_predict),
+            color = "blue") +
+  theme_minimal() + 
+  labs(x = "Year", y = "Wild catch (millions of tons)", 
+       title = "Actual vs. predicted global wild fish catch (1950 - 2012)") +
+  geom_annotate()
+
+```
+
+### **Source:** 
+
+Global wild fish catch and aquaculture production, compiled by Earth Policy Institute with 1950-2010 from U.N. Food and Agriculture Organization (FAO), Global Capture Production and Global Aquaculture Production, electronic databases, at www.fao.org/fishery/topic/16140/en.
